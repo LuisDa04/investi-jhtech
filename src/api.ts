@@ -1821,3 +1821,85 @@ export const globalSearch = async (query: string, userId: string, limit = 20): P
     return []
   }
 }
+
+// ======================================
+// ========== NUEVOS ENDPOINTS ==========
+// ======================================
+
+export const getUserProfile = async (userId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, nombre, full_name, username, email, avatar_url, photo_url, role")
+      .eq("id", userId)
+      .single()
+
+    if (error) throw error
+
+    return {
+      id: data.id,
+      name: data.full_name || data.nombre || data.username || 'Usuario',
+      avatar: data.avatar_url || data.photo_url,
+      role: data.role || 'Usuario',
+      email: data.email
+    }
+  }
+  catch (error) {
+    console.log("Error fetching user profile:", error)
+    
+    if (error instanceof Error) {
+      throw new Error(`No se pudo obtener el perfil del usuario: ${error.message}`)
+    } else {
+      throw new Error('No se pudo obtener el perfil del usuario: Error desconocido')
+    }
+  }
+}
+
+export const unlikePost = async (postId: string, userId: string) => {
+  try {
+    const { error } = await supabase
+      .from("likes")
+      .delete()
+      .eq("post_id", postId)
+      .eq("user_id", userId)
+
+    if (error) throw error
+
+    return { success: true, message: "Like eliminado" }
+
+  } catch (error) {
+    console.log("Error eliminando el like:", error)
+    
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudo quitar el like: ${errorMessage}`)
+  }
+}
+
+//esta ya esta arriba, hablar con Javier
+export const savePost = async (postId: string, userId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("saved_posts")
+      .insert({
+        post_id: postId,
+        user_id: userId,
+        saved_at: new Date().toISOString()
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    return { 
+      success: true, 
+      message: "Post saved successfully",
+      savedPost: data
+    }
+
+  } catch (error) {
+    console.log("Error saving post:", error)
+    
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudo guardar el post: ${errorMessage}`)
+  }
+}
