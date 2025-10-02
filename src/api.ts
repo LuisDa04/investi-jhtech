@@ -1875,15 +1875,41 @@ export const unlikePost = async (postId: string, userId: string) => {
   }
 }
 
-//esta ya esta arriba, hablar con Javier
-export const savePost = async (postId: string, userId: string) => {
+export const getConversations = async (userId: string) => {
+  try {
+    const { data, error } = await supabase.rpc('get_user_conversations', {
+      user_id_param: userId
+    })
+
+    if (error) throw error
+
+    return (data || []).map((conversation: any) => ({
+      id: conversation.id,
+      last_message: conversation.last_message,
+      unread_count: conversation.unread_count || 0,
+      participant: {
+        id: conversation.participant?.id || conversation.participant_id,
+        name: conversation.participant?.full_name || conversation.participant?.nombre || conversation.participant?.username || 'Usuario',
+        avatar: conversation.participant?.avatar_url || conversation.participant?.photo_url,
+        role: conversation.participant?.role || 'Usuario'
+      }
+    }))
+
+  } catch (error) {
+    console.log("Error fetching conversations:", error)
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudieron obtener las conversaciones: ${errorMessage}`)
+  }
+}
+
+export const followUser = async (followerId: string, followingId: string) => {
   try {
     const { data, error } = await supabase
-      .from("saved_posts")
+      .from("user_follows")
       .insert({
-        post_id: postId,
-        user_id: userId,
-        saved_at: new Date().toISOString()
+        follower_id: followerId,
+        following_id: followingId,
+        created_at: new Date().toISOString()
       })
       .select()
       .single()
@@ -1892,14 +1918,85 @@ export const savePost = async (postId: string, userId: string) => {
 
     return { 
       success: true, 
-      message: "Post saved successfully",
-      savedPost: data
+      message: "Usuario seguido exitosamente",
+      follow: data
     }
 
   } catch (error) {
-    console.log("Error saving post:", error)
+    console.log("Error al seguir al usuario:", error)
     
     const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
-    throw new Error(`No se pudo guardar el post: ${errorMessage}`)
+    throw new Error(`No se pudo seguir al usuario: ${errorMessage}`)
+  }
+}
+
+export const unfollowUser = async (followerId: string, followingId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from("user_follows")
+      .delete()
+      .eq("follower_id", followerId)
+      .eq("following_id", followingId)
+      .select()
+
+    if (error) throw error
+
+    return { 
+      success: true, 
+      message: "Dejaste de seguir al usuario",
+      unfollowedCount: data?.length || 0
+    }
+
+  } catch (error) {
+    console.log("Error al dejar de seguir al usuario", error)
+    
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudo dejar de seguir al usuario: ${errorMessage}`)
+  }
+}
+
+export const sharePost = async (postId: string, userId: string) => {
+  try {
+    const { error } = await supabase.rpc('increment_post_shares', { 
+      post_id: postId, 
+      user_id: userId 
+    })
+
+    if (error) throw error
+
+    return { 
+      success: true, 
+      message: "Post compartido exitosamente" 
+    }
+
+  } catch (error) {
+    console.log("Error compartiendo post:", error)
+    
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudo compartir el post: ${errorMessage}`)
+  }
+}
+
+export const getQuickActions = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('quick_actions')
+      .select('*')
+      .eq('active', true)
+      .order('order')
+
+    if (error) throw error
+
+    return (data || []).map((action: any) => ({
+      key: action.key || action.id,
+      label: action.label,
+      icon: action.icon,
+      color: action.color
+    }))
+
+  } catch (error) {
+    console.log("Error fetching quick actions:", error)
+    const errorMessage = error instanceof Error ? error.message : 'Error desconocido'
+    throw new Error(`No se pudieron obtener las acciones rápidas: ${errorMessage}`)
   }
 }
