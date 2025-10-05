@@ -12,6 +12,7 @@ import {
   Image,  
   ActivityIndicator,  
   Alert,  
+  Keyboard,
 } from "react-native";  
 import { ArrowLeft, Send } from "lucide-react-native";  
 import {  
@@ -26,13 +27,14 @@ import { supabase } from "../supabase";
   
 interface Message {  
   id: string;  
-  content: string;  
+  content: string;
   created_at: string;  
-  user: {  
-    id: string;  
-    nombre: string;  
-    avatar: string;  
-  };  
+  sender_id: string;
+  user?: {
+    id: string;
+    nombre: string;
+    avatar: string;
+  };
 }  
   
 export function ChatScreen({ navigation, route }: any) {  
@@ -44,6 +46,7 @@ export function ChatScreen({ navigation, route }: any) {
   const [sending, setSending] = useState(false);  
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);  
   const flatListRef = useRef<FlatList>(null);  
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   
   useAuthGuard();  
   
@@ -65,10 +68,11 @@ export function ChatScreen({ navigation, route }: any) {
           // Transform the message to match our interface
           const transformedMessage = {
             id: newMessage.id,
-            content: newMessage.content,
+            content: newMessage.content || newMessage.contenido,
             created_at: newMessage.created_at,
+            sender_id: newMessage.sender_id || newMessage.user_id,
             user: {
-              id: newMessage.user_id,
+              id: newMessage.user_id || newMessage.sender_id,
               nombre: 'Usuario', // Will be populated by loadMessages
               avatar: 'https://i.pravatar.cc/100'
             }
@@ -85,6 +89,22 @@ export function ChatScreen({ navigation, route }: any) {
       supabase.removeChannel(channel);
     };
   }, [conversationId]);  
+
+  // Keyboard listeners to move input bar (works for Android and iOS)
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e: any) => {
+      setKeyboardHeight(e.endCoordinates?.height || 0);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 120);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   
   const loadInitialData = async () => {  
     try {  
@@ -130,8 +150,9 @@ export function ChatScreen({ navigation, route }: any) {
       // Transform messages to match our interface
       const transformedMessages = response.map((msg: any) => ({
         id: msg.id,
-        content: msg.content,
+        content: msg.content || msg.contenido,
         created_at: msg.created_at,
+        sender_id: msg.sender_id || msg.user_id,
         user: {
           id: msg.user_id,
           nombre: msg.user?.nombre || msg.user?.full_name || 'Usuario',
@@ -164,27 +185,70 @@ export function ChatScreen({ navigation, route }: any) {
 
     try {
       const uid = await getCurrentUserId();
+      const other = participant.id;
       if (!uid) return;
 
-      await sendChatMessage({
+      // Optimistic UI: add a temporary message so it appears immediately
+      const tempId = `tmp-${Date.now()}`;
+      const tempMessage: Message = {
+        id: tempId,
+        content: messageText,
+        created_at: new Date().toISOString(),
+        sender_id: uid,
+        user: {
+          id: uid,
+          nombre: 'Yo',
+          avatar: undefined as any
+        }
+      };
+
+      setMessages(prev => [...prev, tempMessage]);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+
+      // Send to server (no hardcoded media_url)
+      const sent = await sendChatMessage({
         conversation_id: conversationId,
         user_id: uid,
+        other_user_id: other,
         content: messageText,
         message_type: 'text'
       });
+
+      // Replace temporary message with server message if available
+      const serverMessage = Array.isArray(sent) ? sent[0] : sent;
+      if (serverMessage && serverMessage.id) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === tempId) {
+            return {
+              id: serverMessage.id,
+              content: serverMessage.content || serverMessage.contenido,
+              created_at: serverMessage.created_at || m.created_at,
+              sender_id: serverMessage.sender_id || serverMessage.user_id || uid,
+              user: {
+                id: serverMessage.user_id || serverMessage.sender_id || uid,
+                nombre: 'Yo',
+                avatar: m.user?.avatar || undefined as any
+              }
+            } as Message;
+          }
+          return m;
+        }));
+      }
       
-      // Don't reload messages, let realtime handle it
+      
     } catch (err) {
       console.error("Error sending message:", err);
       Alert.alert("Error", "No se pudo enviar el mensaje");
       setInput(messageText);
+      // remove temporary messages that failed
+      setMessages(prev => prev.filter(m => !m.id.startsWith('tmp-')));
     } finally {
       setSending(false);
     }
   };  
   
   const renderMessage = ({ item }: { item: Message }) => {  
-    const isMine = item.user.id === currentUserId;  
+    const isMine = item.sender_id === currentUserId;  
       
     return (  
       <View  
@@ -196,14 +260,14 @@ export function ChatScreen({ navigation, route }: any) {
         {!isMine && (  
           <Image  
             source={{  
-              uri: item.user.avatar || "https://i.pravatar.cc/100",  
+              uri: item.user?.avatar || "https://i.pravatar.cc/100",  
             }}  
             style={styles.avatar}  
           />  
         )}  
         <View style={[styles.bubble, isMine ? styles.myBubble : styles.otherBubble]}>  
           {!isMine && (  
-            <Text style={styles.senderName}>{item.user.nombre}</Text>  
+            <Text style={styles.senderName}>{item.user?.nombre}</Text>  
           )}  
           <Text style={[styles.messageText, isMine && styles.myMessageText]}>  
             {item.content}  
@@ -262,15 +326,16 @@ export function ChatScreen({ navigation, route }: any) {
         data={messages}  
         renderItem={renderMessage}  
         keyExtractor={(item) => item.id}  
-        contentContainerStyle={styles.messageList}  
+        contentContainerStyle={[styles.messageList, { paddingBottom: 16 + keyboardHeight }]}  
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}  
+        keyboardShouldPersistTaps="handled"
       />  
   
       <KeyboardAvoidingView  
-        behavior={Platform.OS === "ios" ? "padding" : undefined}  
+        behavior={Platform.OS === "ios" ? "padding" : 'height'}  
         keyboardVerticalOffset={80}  
       >  
-        <View style={styles.inputContainer}>  
+        <View style={[styles.inputContainer, { paddingBottom: Platform.OS === 'ios' ? 12 : 12, marginBottom: keyboardHeight }]}>  
           <TextInput  
             value={input}  
             onChangeText={setInput}  
